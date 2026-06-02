@@ -1,0 +1,51 @@
+bullet_quality:
+  starts_with_action_verb:
+    weight: high
+    good:
+      - Built
+      - Designed
+      - Implemented
+      - Developed
+      - Reduced
+      - Improved
+      - Optimized
+      - Led
+      - Architected
+      - Launched
+      - Automated
+      - Deployed
+      - Refactored
+      - Integrated
+      - Migrated
+      - Trained
+      - Analyzed
+      - Collaborated
+      - Delivered
+      - Increased
+    bad:
+      - "Worked on"
+      - "Helped with"
+      - "Was responsible for"
+      - "Assisted in"
+      - "Participated in"
+      - "Involved in"
+      - "Responsible for"
+
+  has_quantification:
+    weight: high
+    description: "Bullet should contain at least one number, percentage, or scale metric"
+    examples:
+      good: "Reduced API latency by 30% via Redis caching"
+      bad: "Improved API performance"
+
+  specificity:
+    weight: medium
+    description: "Mention specific technologies, tools, or methods"
+    examples:
+      good: "Trained ResNet-50 on 50k images achieving 94% accuracy"
+      bad: "Did a machine learning project"
+
+  length:
+    weight: low
+    max_chars: 180
+    description: "Bullet should fit in 1-2 lines"

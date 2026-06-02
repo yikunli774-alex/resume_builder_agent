@@ -1,0 +1,33 @@
+rules:
+  - id: required_sections
+    severity: error
+    description: "Resume must contain personal_info and education sections"
+    required: [personal_info, education]
+
+  - id: personal_info_email
+    severity: error
+    description: "personal_info must include an email address"
+
+  - id: max_page_estimate
+    severity: warning
+    description: "Resume should not exceed 1 page (estimated by character count)"
+    estimated_chars_per_page: 3500
+
+  - id: max_bullets_per_experience
+    severity: warning
+    description: "Each experience entry should have at most 5 bullets"
+    max: 5
+
+  - id: min_bullets_per_experience
+    severity: warning
+    description: "Each experience entry should have at least 2 bullets"
+    min: 2
+
+  - id: max_bullets_per_project
+    severity: warning
+    description: "Each project entry should have at most 4 bullets"
+    max: 4
+
+  - id: consistent_date_format
+    severity: warning
+    description: "All dates should follow YYYY-MM format (e.g. 2024-05)"

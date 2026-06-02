@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    {% include 'styles.css' %}
+  </style>
+</head>
+<body>
+
+<!-- ══ HEADER ══ -->
+<header>
+  <h1>{{ resume.personal_info.name or "Your Name" }}</h1>
+  <div class="contact">
+    {% if resume.personal_info.phone %}{{ resume.personal_info.phone }}{% endif %}
+    {% if resume.personal_info.email %}<span>|</span> {{ resume.personal_info.email }}{% endif %}
+    {% if resume.personal_info.links and resume.personal_info.links.linkedin %}
+      <span>|</span> <a href="{{ resume.personal_info.links.linkedin }}">LinkedIn</a>
+    {% endif %}
+    {% if resume.personal_info.links and resume.personal_info.links.github %}
+      <span>|</span> <a href="{{ resume.personal_info.links.github }}">GitHub</a>
+    {% endif %}
+    {% if resume.personal_info.location %}<span>|</span> {{ resume.personal_info.location }}{% endif %}
+  </div>
+</header>
+
+<!-- ══ EDUCATION ══ -->
+{% if resume.education %}
+<div class="section-title">Education</div>
+{% for edu in resume.education %}
+<div class="entry-header">
+  <span class="left">{{ edu.school }}</span>
+  <span class="right">{{ edu.start_date or "" }}{% if edu.end_date %} – {{ edu.end_date }}{% endif %}</span>
+</div>
+<div class="entry-subheader">
+  <span>{{ edu.degree }}{% if edu.major %}, {{ edu.major }}{% endif %}</span>
+  {% if edu.gpa %}<span class="gpa">GPA: {{ edu.gpa }}</span>{% endif %}
+</div>
+{% if edu.details %}
+<ul class="bullets">
+  {% for detail in edu.details %}<li>{{ detail }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% endfor %}
+{% endif %}
+
+<!-- ══ EXPERIENCE ══ -->
+{% if resume.experience %}
+<div class="section-title">Experience</div>
+{% for exp in resume.experience %}
+<div class="entry-header">
+  <span class="left">{{ exp.company }}</span>
+  <span class="right">{{ exp.start_date or "" }}{% if exp.end_date %} – {{ exp.end_date }}{% endif %}</span>
+</div>
+<div class="entry-subheader">
+  <span>{{ exp.role }}</span>
+  {% if exp.location %}<span>{{ exp.location }}</span>{% endif %}
+</div>
+{% if exp.bullets %}
+<ul class="bullets">
+  {% for bullet in exp.bullets %}<li>{{ bullet.content }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% endfor %}
+{% endif %}
+
+<!-- ══ PROJECTS ══ -->
+{% if resume.projects %}
+<div class="section-title">Projects</div>
+{% for proj in resume.projects %}
+<div class="entry-header">
+  <span class="left">{{ proj.name }}</span>
+  <span class="right">{{ proj.start_date or "" }}{% if proj.end_date %} – {{ proj.end_date }}{% endif %}</span>
+</div>
+{% if proj.tech_stack %}
+<div class="entry-subheader">
+  <span><em>{{ proj.tech_stack | join(", ") }}</em></span>
+</div>
+{% endif %}
+{% if proj.bullets %}
+<ul class="bullets">
+  {% for bullet in proj.bullets %}<li>{{ bullet.content }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% endfor %}
+{% endif %}
+
+<!-- ══ SKILLS ══ -->
+{% if resume.skills %}
+<div class="section-title">Technical Skills</div>
+{% if resume.skills.languages %}
+<div class="skills-row"><strong>Languages:</strong> {{ resume.skills.languages | join(", ") }}</div>
+{% endif %}
+{% if resume.skills.frameworks %}
+<div class="skills-row"><strong>Frameworks:</strong> {{ resume.skills.frameworks | join(", ") }}</div>
+{% endif %}
+{% if resume.skills.tools %}
+<div class="skills-row"><strong>Tools:</strong> {{ resume.skills.tools | join(", ") }}</div>
+{% endif %}
+{% if resume.skills.other %}
+<div class="skills-row"><strong>Other:</strong> {{ resume.skills.other | join(", ") }}</div>
+{% endif %}
+{% endif %}
+
+<!-- ══ ADDITIONAL ══ -->
+{% if resume.additional %}
+{% if resume.additional.certifications or resume.additional.awards %}
+<div class="section-title">Additional</div>
+{% if resume.additional.certifications %}
+<div class="skills-row"><strong>Certifications:</strong> {{ resume.additional.certifications | join(", ") }}</div>
+{% endif %}
+{% if resume.additional.awards %}
+<div class="skills-row"><strong>Awards:</strong> {{ resume.additional.awards | join(", ") }}</div>
+{% endif %}
+{% endif %}
+{% endif %}
+
+</body>
+</html>

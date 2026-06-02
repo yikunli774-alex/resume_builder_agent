@@ -1,0 +1,69 @@
+/* Jake's Resume — single-column LaTeX-inspired style */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 10.5pt;
+  color: #000;
+  padding: 0.55in 0.55in 0.55in 0.55in;
+  line-height: 1.2;
+}
+
+/* ── Header ── */
+header { text-align: center; margin-bottom: 6pt; }
+header h1 { font-size: 20pt; font-weight: bold; letter-spacing: 1px; }
+header .contact {
+  font-size: 9.5pt;
+  margin-top: 2pt;
+}
+header .contact a { color: #000; text-decoration: none; }
+header .contact span { margin: 0 4px; color: #555; }
+
+/* ── Section heading ── */
+.section-title {
+  font-size: 11pt;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid #000;
+  margin: 10pt 0 4pt 0;
+  padding-bottom: 1pt;
+}
+
+/* ── Entry header row (company + date) ── */
+.entry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 1pt;
+}
+.entry-header .left { font-weight: bold; }
+.entry-header .right { font-size: 9.5pt; }
+.entry-subheader {
+  display: flex;
+  justify-content: space-between;
+  font-style: italic;
+  font-size: 9.5pt;
+  margin-bottom: 2pt;
+}
+
+/* ── Bullet list ── */
+ul.bullets {
+  list-style-type: disc;
+  padding-left: 14pt;
+  margin-top: 1pt;
+}
+ul.bullets li {
+  margin-bottom: 1.5pt;
+  font-size: 10pt;
+}
+
+/* ── Skills table ── */
+.skills-row {
+  font-size: 10pt;
+  margin-bottom: 2pt;
+}
+.skills-row strong { font-weight: bold; }
+
+/* ── Education GPA ── */
+.gpa { font-style: italic; font-size: 9.5pt; }
