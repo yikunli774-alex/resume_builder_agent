@@ -9,11 +9,41 @@ RUBRIC_PATH = Path(__file__).parent.parent.parent / "config" / "rubric.yaml"
 MAX_RETRIES = 3
 
 ACTION_VERBS = [
-    "built", "designed", "implemented", "developed", "reduced", "improved",
-    "optimized", "led", "architected", "launched", "automated", "deployed",
-    "refactored", "integrated", "migrated", "trained", "analyzed",
-    "collaborated", "delivered", "increased",
+    "built",
+    "designed",
+    "implemented",
+    "developed",
+    "reduced",
+    "improved",
+    "optimized",
+    "led",
+    "architected",
+    "launched",
+    "automated",
+    "deployed",
+    "refactored",
+    "integrated",
+    "migrated",
+    "trained",
+    "analyzed",
+    "collaborated",
+    "delivered",
+    "increased",
 ]
+
+
+def _load_bad_phrases() -> list:
+    """Load weak opener phrases from rubric.yaml. Returns [] if the file can't be read."""
+    try:
+        with open(RUBRIC_PATH) as f:
+            rubric = yaml.safe_load(f)
+        phrases = rubric["bullet_quality"]["starts_with_action_verb"]["bad"]
+        return [p.lower() for p in phrases]
+    except Exception:
+        return []
+
+
+BAD_PHRASES = _load_bad_phrases()
 
 
 def _check_bullet_rubric(bullet: str) -> dict:
@@ -31,7 +61,44 @@ def _check_bullet_rubric(bullet: str) -> dict:
           "violations": ["..."]  # human-readable explanation for each failed check
         }
     """
-    raise NotImplementedError
+
+    words = bullet.split()
+    first_word = re.sub(r"[^a-zA-Z]", "", words[0].lower()) if words else ""
+    has_action_verb = first_word in ACTION_VERBS
+
+    has_quantification = bool(re.search(r"\d+%?|\d+[kKmMbB]?\b", bullet))
+
+    within_length = len(bullet) <= 180
+
+    stripped = bullet.lower().lstrip("-•* \"'")
+    no_weak_phrase = not any(stripped.startswith(p) for p in BAD_PHRASES)
+
+    violations = []
+    if not has_action_verb:
+        violations.append("Bullet should start with a strong past-tense action verb.")
+    if not has_quantification:
+        violations.append(
+            "Bullet should include at least one quantifiable metric (number or percentage)."
+        )
+    if not within_length:
+        violations.append("Bullet should be under 180 characters.")
+    if not no_weak_phrase:
+        violations.append(
+            "Bullet should not start with a weak phrase (e.g. 'Worked on', 'Responsible for')."
+        )
+
+    passed = has_action_verb and has_quantification and within_length and no_weak_phrase
+
+    return {
+        "passed": passed,
+        "checks": {
+            "has_action_verb": has_action_verb,
+            "has_quantification": has_quantification,
+            "within_length": within_length,
+            "no_weak_phrase": no_weak_phrase,
+        },
+        "violations": violations,
+    }
 
 
 def rewrite_bullet(original_bullet: str, instruction: str, context: dict) -> dict:
@@ -71,4 +138,52 @@ def rewrite_bullet(original_bullet: str, instruction: str, context: dict) -> dic
         - Keep under 180 characters
         - Return ONLY the bullet text, no quotes or explanation
     """
-    raise NotImplementedError
+    validation = _check_bullet_rubric(original_bullet)
+
+    if validation["passed"]:
+        return {
+            "new_bullet": original_bullet,
+            "validation": validation,
+            "attempts": 0,
+        }
+
+    else:
+        for attempt in range(1, MAX_RETRIES + 1):
+            # Construct the prompt for Gemini
+            prompt = f"Rewrite the following resume bullet to be stronger and more impactful.\n\n"
+            prompt += f"Original Bullet: {original_bullet}\n"
+            prompt += f"Instruction: {instruction}\n"
+            if context.get("experience_role"):
+                prompt += f"Role: {context['experience_role']}\n"
+            if context.get("tech_stack"):
+                prompt += f"Tech Stack: {', '.join(context['tech_stack'])}\n"
+            if context.get("jd_text"):
+                prompt += f"Job Description Snippet: {context['jd_text']}\n"
+            if attempt > 1:
+                prompt += f"Previous attempt failed checks: {', '.join(validation['violations'])}\n"
+            prompt += "Please return ONLY the rewritten bullet text, no quotes or explanations."
+
+            # Call Gemini
+            model = GenerativeModel(
+                "gemini-2.5-flash"
+            )  # Implement this function to call Gemini
+            response = model.generate_content(prompt)
+            new_bullet = response.text.strip()
+
+            # Validate the new bullet against the rubric
+            validation = _check_bullet_rubric(new_bullet)
+
+            if validation["passed"]:
+                return {
+                    "new_bullet": new_bullet,
+                    "validation": validation,
+                    "attempts": attempt,
+                }
+
+        # If we exhaust all attempts without passing, return the last attempt with a warning
+        return {
+            "new_bullet": new_bullet,
+            "validation": validation,
+            "attempts": MAX_RETRIES,
+            "warning": validation["violations"],
+        }
