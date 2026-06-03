@@ -63,10 +63,29 @@
 
 ---
 
+## 2026-06-03 — Task 7 `compare_versions.py` + Task 8 注册工具
+
+### Task 7：版本对比
+- 加载两个版本 → 拼 prompt → Gemini 输出结构化 diff（summary + modified/added/removed/reordered）。
+- **优化：相同 id 提前返回**。`if version_a_id == version_b_id` 直接返回空 diff，连数据库和 LLM 都不碰——省一次无谓 prompt（同 rewrite 的 early-exit 思路）。
+- **测试避坑**：一开始用两个相同 id 测，必然得「identical」=假阳性，没验证到 diff 主路。改用 v1(只有名字) vs v2(补邮箱+地址+一段 experience+2 条 bullet) 真测，Gemini 准确列出 5 条 added，diff 逻辑确认可用。
+
+### 踩坑：Vertex 初始化报 403 Cloud Resource Manager API disabled
+- SDK 想把 project 编号转 project ID，去调 cloudresourcemanager API，没启用 → 打印一大段 403 红字。
+- **但无害**：`.env` 已直接给了 `GOOGLE_CLOUD_PROJECT`，SDK 兜底继续跑，结果照常返回。
+- 根治（可选）：`gcloud services enable cloudresourcemanager.googleapis.com`。不治也不影响功能。
+
+### Task 8：agent.py 注册
+- 9 个工具函数直接传函数对象进 `tools=[]`（不用包装），加上 2 个 sub-agent(Google Search/URL context) = 共 11 个。
+- 验收脚本输出 Total: 11 ✅。至此 docstring→Gemini 工具说明书的闭环真正接通。
+
+---
+
 ## 待办 / 待定疑问
 
 - [ ] **min_bullets_per_experience 阈值**：spec 是 `< 2`（只有1条才算少），但觉得太死板，2 条也算少。倾向改成 `< 3`。待定。
 - [ ] **rewrite has_quantification 是否放宽**（见上）。待定。
 - [x] ~~Task 6 `rewrite_bullet.py`~~ ✅ 完成并验证
-- [ ] Task 7 `compare_versions.py` 待实现
-- [ ] agent.py 注册 7 个工具 → `adk web` 联调
+- [x] ~~Task 7 `compare_versions.py`~~ ✅ 完成并验证（含相同-id 提前返回优化）
+- [x] ~~Task 8 agent.py 注册 11 个工具~~ ✅ Total: 11
+- [ ] Task 9 `adk web` 端到端联调 ← 只剩这步

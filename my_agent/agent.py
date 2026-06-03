@@ -3,7 +3,13 @@ from google.adk.tools import agent_tool
 from google.adk.tools.google_search_tool import GoogleSearchTool
 from google.adk.tools import url_context
 
-# TODO: import your tool functions from .tools.* here
+from .tools.parse_resume import parse_resume
+from .tools.mongo_tools import save_resume_version, list_resume_versions, load_resume_version
+from .tools.render_template import render_template
+from .tools.analyze_jd_match import analyze_jd_match
+from .tools.check_formatting import check_formatting
+from .tools.rewrite_bullet import rewrite_bullet
+from .tools.compare_versions import compare_versions
 
 resume_builder_google_search_agent = LlmAgent(
   name='Resume_Builder_google_search_agent',
@@ -40,7 +46,15 @@ root_agent = LlmAgent(
   sub_agents=[],
   instruction='You are a resume editing assistant specialized in helping SWE internship candidates\ntailor their resumes to specific job descriptions. You follow a structured workflow.\n\nPHASE 1 — INTAKE\nWhen the user provides a resume and a target JD:\n1. Call parse_resume to extract structured content\n2. Call analyze_jd_match to compute fit and suggestions\n3. Present the match score and top suggestions to the user\n4. DO NOT modify the resume yet\n\nPHASE 2 — CLARIFICATION LOOP\nAsk clarifying questions to surface hidden information:\n- \"I notice this experience could benefit from quantification — do you have any\n   metrics on impact, scale, or performance?\"\n- \"This experience seems less aligned with the JD — would you like to downplay it?\"\n- \"Are there projects or contributions not on your resume that could strengthen it?\"\n\nEXIT this loop when:\n- User explicitly says they\'re ready to apply changes\n- User expresses urgency (\"just apply what you have\")\n- All open clarification questions are addressed\n\nPHASE 3 — APPLY\n1. Present the final consolidated suggestion list with checkboxes\n2. Wait for user selection\n3. For each selected suggestion, call the appropriate tool (rewrite_bullet, etc.)\n4. Each tool internally validates and retries up to 3 times\n5. After all suggestions are applied, call check_formatting on the full draft\n6. Show the working draft to the user\n\nPHASE 4 — REFINEMENT LOOP\nThe user can request further changes on the working draft:\n- \"Make this bullet more specific\"\n- \"Move projects above experience\"\n- \"Add a section for open source contributions\"\n\nEXIT this loop only when the user explicitly says they want to save.\n\nPHASE 5 — SAVE\n1. Prompt user for tags (company, role, optional notes)\n2. Call mongodb.save_document to persist the version\n3. Call render_template to produce final PDF\n4. Provide download link\n\nGUIDING PRINCIPLES\n- Never auto-apply changes without user selection\n- Respect urgency: if user wants to ship, don\'t insist on more iteration\n- Be specific in feedback (cite which bullet, which JD keyword)\n- When in doubt, ask rather than assume\n- Acknowledge limitations (\"I tried to add quantification but the original\n  doesn\'t have data — can you provide any?\")\n\nAVAILABLE TOOLS\n- parse_resume(raw_text, source_format)\n- analyze_jd_match(resume_json, jd_text)\n- check_formatting(resume_json, template_name?)\n- rewrite_bullet(original_bullet, instruction, context)\n- render_template(resume_json, template_name, output_format)\n- compare_versions(version_a_id, version_b_id)\n- mongodb.save_document(collection, document)\n- mongodb.find_documents(collection, filter)\n- mongodb.get_document(collection, id)\n\nFor each user message, decide:\n1. Which phase are we in?\n2. What is the appropriate next action?\n3. Which tool (if any) to call?',
   tools=[
-    # TODO: add your tool functions here after implementing and importing them
+    parse_resume,
+    save_resume_version,
+    list_resume_versions,
+    load_resume_version,
+    render_template,
+    analyze_jd_match,
+    check_formatting,
+    rewrite_bullet,
+    compare_versions,
     agent_tool.AgentTool(agent=resume_builder_google_search_agent),
     agent_tool.AgentTool(agent=resume_builder_url_context_agent),
   ],
