@@ -4,6 +4,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from google.adk.tools import ToolContext
 from jinja2 import Environment, FileSystemLoader
 
 TEMPLATES_DIR = Path(__file__).parent.parent.parent / "config" / "templates"
@@ -50,17 +51,17 @@ def _html_to_pdf(html: str, output_path: str) -> None:
 
 
 def render_template(
-    resume_json: dict,
     template_name: str = "jakes_resume_en",
     output_format: str = "pdf",
+    tool_context: ToolContext = None,
 ) -> dict:
     """
-    Render a resume into a formatted PDF or HTML preview using a named template.
+    Render the current resume into a formatted PDF or HTML preview using a named template.
     Call this when the user wants to generate a formatted resume file for download,
     or when you want to show them an HTML preview.
+    The resume is read automatically from session state — do NOT pass it.
 
     Args:
-        resume_json: Structured resume data — the output from parse_resume.
         template_name: Which template to use. Currently available: 'jakes_resume_en'.
         output_format: 'pdf' to generate a downloadable PDF file, or 'html' for
                        an inline HTML preview only.
@@ -82,9 +83,13 @@ def render_template(
 
     Note: Use a random UUID (8 hex chars) in the output filename to avoid collisions.
     """
+    resume_json = (tool_context.state.get("resume_json") if tool_context else None)
+    if not resume_json:
+        return {"error": "No resume found in session. Please parse a resume first."}
+
     if not (TEMPLATES_DIR / template_name).exists():
         return {"error": f"Template '{template_name}' not found."}
-    
+
     from jinja2 import Environment, FileSystemLoader
 
     env = Environment(loader=FileSystemLoader(TEMPLATES_DIR / template_name))

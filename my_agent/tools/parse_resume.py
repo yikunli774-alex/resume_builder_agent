@@ -3,10 +3,11 @@ import json
 import base64
 
 import pdfplumber
+from google.adk.tools import ToolContext
 from vertexai.generative_models import GenerativeModel
 
 
-def parse_resume(raw_text: str, source_format: str = "text") -> dict:
+def parse_resume(raw_text: str, source_format: str = "text", tool_context: ToolContext = None) -> dict:
     """
     Parse a resume into structured JSON with sections for education, experience,
     projects, and skills. Each item (bullet, experience, project, education entry)
@@ -82,6 +83,11 @@ Resume:
 
     try:
         resume_json = json.loads(text)
+        # Store the parsed resume in session state as the single source of truth.
+        # Downstream tools (analyze, check, render, save) read it from here instead
+        # of receiving it as a parameter, so the large JSON never enters a function call.
+        if tool_context is not None:
+            tool_context.state["resume_json"] = resume_json
         return {"resume_json": resume_json, "parse_warnings": []}
     except json.JSONDecodeError as e:
         return {

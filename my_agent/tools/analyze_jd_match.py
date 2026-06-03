@@ -1,16 +1,17 @@
 import json
 
+from google.adk.tools import ToolContext
 from vertexai.generative_models import GenerativeModel
 
 
-def analyze_jd_match(resume_json: dict, jd_text: str) -> dict:
+def analyze_jd_match(jd_text: str, tool_context: ToolContext = None) -> dict:
     """
-    Analyze how well a resume matches a job description. Returns an overall
+    Analyze how well the current resume matches a job description. Returns an overall
     match score, keyword coverage, and a prioritized list of improvement suggestions.
     Call this after parse_resume, once the user has also provided a job description.
+    The resume is read automatically from session state — do NOT pass it.
 
     Args:
-        resume_json: Structured resume data — the output of parse_resume.
         jd_text: The full text of the target job description.
 
     Returns:
@@ -32,6 +33,15 @@ def analyze_jd_match(resume_json: dict, jd_text: str) -> dict:
     Prompt tip: Tell Gemini to be specific — cite the exact bullet id or section
     name in each suggestion's 'target' field.
     """
+    resume_json = (tool_context.state.get("resume_json") if tool_context else None)
+    if not resume_json:
+        return {
+            "match_score": 0,
+            "keyword_coverage": {"covered": [], "missing": []},
+            "experience_relevance": [],
+            "suggestions": [],
+            "error": "No resume found in session. Please parse a resume first.",
+        }
     structered_resume = json.dumps(resume_json)
     model = GenerativeModel(
         "gemini-2.5-flash",

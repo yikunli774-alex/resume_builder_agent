@@ -130,14 +130,35 @@
 
 ---
 
+## 2026-06-03（晚）— session state 重构（第一期，已写完待端到端验证）
+
+### 动机
+MALFORMED + schema 漂移同一个根因：resume_json 当 function-call 参数反复传/被 agent 重写。解法 = 简历在会话里只存一份，放 ADK 的 `tool_context.state`，工具从 state 读，agent 不再传/重写。
+
+### 关键机制（调研确认）
+- ADK 靠**类型注解** `tool_context: ToolContext` 自动注入该参数，且**对 Gemini 不可见**（不算模型要填的参数）。所以工具加这个参数后，模型调用时根本不用传简历。
+- `tool_context.state` 就是个 delta-aware dict，直接 `state['resume_json'] = ...` 读写。
+
+### 改了什么（5 个工具 + agent.py）
+- parse_resume：加 `tool_context`，解析成功后 `state['resume_json'] = resume_json`（唯一写入点 / 入口）。
+- analyze_jd_match / check_formatting / render_template / save_resume_version：**去掉 resume_json 参数**，改从 `state.get('resume_json')` 读；没有就返回 "No resume found in session" 优雅降级。
+- 手法：check/render 函数体不动，只在开头把 state 的值绑给同名局部变量 `resume_json`。
+- agent.py：AVAILABLE TOOLS 更新签名（不再传简历）+ 修正过时的 mongodb.* 名；加 SESSION STATE 段，明确禁止 agent 重构/内联整份简历。
+
+### 验证
+- 离线单测（假 tool_context，.state=dict，跑在 asyncio.run 里模拟 adk web）：parse→analyze(score 68)→check(passed)→save(version_id)→render(PDF 含项目名) **整条链全绿**，全程无工具收 resume_json 参数；空 ctx 兜底返回 "No resume found"。✅
+- **待办**：adk web 端到端重测（下次）——确认 save+render 双调用不再 MALFORMED、PDF 不漂移。
+- 注：第一期不含「rewrite 结果写回 state」（编辑回写留第二期）。当前 rewrite 仍是独立 bullet 进出，改写后的内容尚未合并回 state 里的简历。
+
+---
+
 ## 待办 / 待定疑问
 
 - [ ] **min_bullets_per_experience 阈值**：spec 是 `< 2`（只有1条才算少），但觉得太死板，2 条也算少。倾向改成 `< 3`。待定。
 - [ ] **rewrite has_quantification 是否放宽**（见上）。待定。
-- [ ] **MALFORMED_FUNCTION_CALL 治本（升级为必做）**：上 session state，不再把 resume_json 当 function-call 参数传。
-  - 2026-06-03 更新：临时方案（换 pro）**已到头**。当 agent 想一次 save+render（双调用 + 双份完整简历内联）时，**连 pro 都崩 MALFORMED**。数据量够大谁都救不了。
-  - 同时发现：**schema 漂移的真正源头不在 parse_resume**——是 agent 在对话里凭记忆**重新攒整份简历**去 save，绕过了 parse 的 schema 约束，又冒出 institution/title/text/大写 skills。prompt 锁 parse 的键名治不了这个。
-  - 两个问题（MALFORMED + 漂移）**同一个解**：resume_json 存 session state，唯一一份，工具从 state 读，agent 不再内联/重写它。
+- [~] **MALFORMED_FUNCTION_CALL 治本（代码已改完，待端到端验证）**：session state 第一期已实现（见上）。离线单测通过，下次需在 adk web 里确认 save+render 不再崩。
+  - 背景：临时方案（换 pro）已到头，save+render 双调用连 pro 都崩；schema 漂移真源头是 agent 重写简历，非 parse_resume。
+  - [ ] 第二期：rewrite 结果写回 state（编辑回写），让"改"也持久化。
 - [ ] **stale session 并发冲突**：pro 慢响应期间重复点发送/刷新 → 两请求抢同一会话 → ADK 报 `last_update_time earlier than storage`（乐观锁冲突），取消该次运行，但会自愈。操作提醒：pro thinking 时别重复操作。`.adk/session.db` 是运行时产物，已加 .gitignore。
 - [ ] **PHASE 2 不守工作流**：长对话里第二轮起跳出澄清循环、自由发挥。已在 instruction 加强制停留 + 明确退出条件改善，但 LLM 不保证 100% 遵守。治本方向（未来）：把 PHASE 拆成 sub-agent 用状态控制流转，而非单段长 instruction。
 - [ ] **schema 漂移**：parse_resume 输出键名（text/institution）与 spec（content/school）不一致，待对齐。

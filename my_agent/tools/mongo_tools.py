@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from bson import ObjectId
 from dotenv import load_dotenv
+from google.adk.tools import ToolContext
 from pymongo import MongoClient
 from pathlib import Path
 
@@ -21,30 +22,35 @@ def _get_db():
 
 
 def save_resume_version(
-    resume_json: dict,
     label: str,
     template_used: str = "jakes_resume_en",
     user_session: str = "default",
+    tool_context: ToolContext = None,
 ) -> dict:
     """
     Save the current resume draft as a named version in MongoDB.
     Call this only when the user explicitly says they want to save their resume.
-    Never call proactively.
+    Never call proactively. The resume is read automatically from session state —
+    do NOT pass it.
 
     Args:
-        resume_json: The structured resume data to persist (output from parse_resume).
         label: Human-readable version name, e.g. 'Google SWE Intern 2026'.
         template_used: The template name used for rendering this version.
         user_session: Session ID that groups versions per user. Use 'default' if unknown.
 
     Returns:
         A dict with 'version_id' (MongoDB ObjectId as string) and 'created_at' (ISO timestamp).
+        Returns {'error': ...} if no resume exists in the session yet.
 
     Behavior:
+        - Read resume_json from session state.
         - Insert a document into the 'resume_versions' collection.
         - The document must include: user_session, label, template_used, created_at, resume_json.
         - Return the inserted document's _id as a string, and the timestamp as ISO format.
     """
+    resume_json = (tool_context.state.get("resume_json") if tool_context else None)
+    if not resume_json:
+        return {"error": "No resume found in session. Please parse a resume first."}
 
     db = _get_db()
 

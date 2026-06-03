@@ -3,17 +3,18 @@ import re
 from pathlib import Path
 
 import yaml
+from google.adk.tools import ToolContext
 
 RULES_PATH = Path(__file__).parent.parent.parent / "config" / "structure_rules.yaml"
 
 
-def check_formatting(resume_json: dict, template_name: str = "jakes_resume_en") -> dict:
+def check_formatting(template_name: str = "jakes_resume_en", tool_context: ToolContext = None) -> dict:
     """
-    Run hard structural rules against a resume to catch formatting violations.
+    Run hard structural rules against the current resume to catch formatting violations.
     Call this after applying suggestions to the working draft, before saving.
+    The resume is read automatically from session state — do NOT pass it.
 
     Args:
-        resume_json: Structured resume data.
         template_name: Reserved for future use (currently unused).
 
     Returns:
@@ -35,6 +36,19 @@ def check_formatting(resume_json: dict, template_name: str = "jakes_resume_en") 
         - Each violation dict must have: rule_id, severity, target, message, suggestion.
         - 'target' should be specific (e.g. 'personal_info.email', 'experience.e1').
     """
+    resume_json = (tool_context.state.get("resume_json") if tool_context else None)
+    if not resume_json:
+        return {
+            "passed": False,
+            "violations": [{
+                "rule_id": "no_resume",
+                "severity": "error",
+                "target": "resume_json",
+                "message": "No resume found in session. Please parse a resume first.",
+                "suggestion": "Run parse_resume before checking formatting.",
+            }],
+        }
+
     violations = []
 
     try:
