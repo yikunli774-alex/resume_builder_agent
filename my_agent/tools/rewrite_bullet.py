@@ -151,6 +151,14 @@ def rewrite_bullet(original_bullet: str, instruction: str, context: dict) -> dic
         for attempt in range(1, MAX_RETRIES + 1):
             # Construct the prompt for Gemini
             prompt = f"Rewrite the following resume bullet to be stronger and more impactful.\n\n"
+            prompt += (
+                "CRITICAL TRUTHFULNESS RULE: Use ONLY facts present in the original bullet "
+                "or explicitly given below. NEVER invent technologies, frameworks, tools, "
+                "metrics, numbers, or details the user did not state (e.g. do not add "
+                "'LangChain', '30%', etc. unless they appear in the input). You may rephrase "
+                "and strengthen wording, but you must not fabricate facts. If the bullet "
+                "lacks quantifiable data, improve the phrasing without inventing numbers.\n\n"
+            )
             prompt += f"Original Bullet: {original_bullet}\n"
             prompt += f"Instruction: {instruction}\n"
             if context.get("experience_role"):

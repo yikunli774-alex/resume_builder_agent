@@ -52,6 +52,7 @@ def analyze_jd_match(resume_json: dict, jd_text: str) -> dict:
   - target: the specific section or bullet ID in the resume that the suggestion applies to
   - type: one of 'rewrite', 'reorder', 'add', 'remove', or 'quantify'
   - impact_score: an integer from 0 to 100 indicating the potential impact of the suggestion on improving the match
+IMPORTANT — stay within the resume schema. The resume only supports these sections: personal_info, education, experience, projects, skills, additional. Every suggestion must act on an existing bullet or one of these sections (e.g. rewrite/quantify a bullet, reorder experience, add a bullet to a project). Do NOT suggest creating sections the schema does not support, such as a professional summary, objective, or cover letter.
 The response MUST be valid JSON matching the structure described above, with no additional text or formatting. If you encounter any issues generating the response, return an object with empty lists and an 'error' key explaining the problem.
 Resume JSON:
 {structered_resume}

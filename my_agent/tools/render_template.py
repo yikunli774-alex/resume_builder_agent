@@ -1,9 +1,52 @@
+import subprocess
+import sys
+import tempfile
 import uuid
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
 TEMPLATES_DIR = Path(__file__).parent.parent.parent / "config" / "templates"
+
+# Worker script run in a separate process. Playwright's sync API refuses to run
+# inside an asyncio event loop (e.g. under `adk web`), so we render the PDF in a
+# clean subprocess that has no running loop. Usage: python -c <this> <html_file> <out_pdf>
+_PDF_WORKER = """
+import sys
+from playwright.sync_api import sync_playwright
+
+html_file, out_pdf = sys.argv[1], sys.argv[2]
+with open(html_file, encoding="utf-8") as f:
+    html = f.read()
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page()
+    page.set_content(html)
+    page.pdf(
+        path=out_pdf,
+        format="Letter",
+        margin={"top": "0.5in", "bottom": "0.5in", "left": "0.5in", "right": "0.5in"},
+    )
+    browser.close()
+"""
+
+
+def _html_to_pdf(html: str, output_path: str) -> None:
+    """Render HTML to a PDF file in a separate process (avoids asyncio-loop conflict)."""
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".html", delete=False, encoding="utf-8"
+    ) as tmp:
+        tmp.write(html)
+        html_file = tmp.name
+    try:
+        subprocess.run(
+            [sys.executable, "-c", _PDF_WORKER, html_file, output_path],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        Path(html_file).unlink(missing_ok=True)
 
 
 def render_template(
@@ -50,17 +93,14 @@ def render_template(
     if output_format == "html":
         return {"file_path": None, "html_preview": html_preview}
     
-    from playwright.sync_api import sync_playwright
     output_path = f"/tmp/resume_{uuid.uuid4().hex[:8]}.pdf"
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        page.set_content(html_preview)
-        page.pdf(path=output_path, format="Letter", 
-                 margin={"top": "0.5in", "bottom": "0.5in", "left": "0.5in", "right": "0.5in"})
-        browser.close()
-    
-    return {"file_path": output_path, "html_preview": html_preview}
-    
+    try:
+        _html_to_pdf(html_preview, output_path)
+    except subprocess.CalledProcessError as e:
+        return {
+            "file_path": None,
+            "html_preview": html_preview,
+            "error": f"PDF rendering failed: {e.stderr or e}",
+        }
 
-    raise NotImplementedError
+    return {"file_path": output_path, "html_preview": html_preview}

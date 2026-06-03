@@ -53,9 +53,22 @@ def parse_resume(raw_text: str, source_format: str = "text") -> dict:
 
 Rules:
 - Return ONLY valid JSON, no markdown, no wrapper keys
-- Top-level keys must be: personal_info, education, experience, projects, skills, additional
+- Top-level keys must be EXACTLY: personal_info, education, experience, projects, skills, additional
+- Use the EXACT field names below. Do NOT use synonyms (e.g. NOT "title"/"institution"/"item"/"technologies").
 - Assign a short unique ID (e.g. "e1", "b2") to every experience, project, education entry, and bullet
 - Missing fields use null
+
+Exact schema (use these keys verbatim):
+- personal_info: {{ "name", "email", "phone", "location", "links": {{ "linkedin", "github" }} }}
+- education[]: {{ "id", "school", "degree", "major", "gpa", "start_date", "end_date", "details": [string, ...] }}
+    ("school" NOT "institution"; coursework goes in "details" as a list of strings)
+- experience[]: {{ "id", "company", "role", "location", "start_date", "end_date", "bullets": [{{ "id", "content" }}] }}
+- projects[]: {{ "id", "name", "tech_stack": [string, ...], "start_date", "end_date", "bullets": [{{ "id", "content" }}] }}
+    ("name" NOT "title"; "tech_stack" is a LIST not a string)
+- Every bullet object MUST use the key "content" (NOT "item"/"text"/"description")
+- Dates use YYYY-MM format
+- skills: {{ "languages": [], "frameworks": [], "tools": [], "other": [] }}
+- additional: {{ "certifications": [], "awards": [] }}
 
 Resume:
 {raw_text}""")
