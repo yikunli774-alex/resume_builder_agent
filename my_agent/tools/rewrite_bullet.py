@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 
 import yaml
+from google.adk.tools import ToolContext
 from vertexai.generative_models import GenerativeModel
 
 RUBRIC_PATH = Path(__file__).parent.parent.parent / "config" / "rubric.yaml"
@@ -101,15 +102,38 @@ def _check_bullet_rubric(bullet: str) -> dict:
     }
 
 
-def rewrite_bullet(original_bullet: str, instruction: str, context: dict) -> dict:
+def _find_bullet(resume_json: dict, bullet_id: str):
+    """Locate a bullet by id across experience[] and projects[].
+
+    Returns the bullet dict (a mutable reference living inside resume_json) so the
+    caller can edit it in place, or None if no bullet with that id exists.
     """
-    Rewrite a single resume bullet point to be stronger and more impactful.
+    for section in ("experience", "projects"):
+        for entry in resume_json.get(section) or []:
+            for bullet in entry.get("bullets") or []:
+                if bullet.get("id") == bullet_id:
+                    return bullet
+    return None
+
+
+def rewrite_bullet(
+    bullet_id: str,
+    instruction: str,
+    context: dict,
+    tool_context: ToolContext = None,
+) -> dict:
+    """
+    Rewrite a single resume bullet point to be stronger and more impactful, and
+    persist the result back into the resume held in session state.
     Internally validates the result against a quality rubric and retries up to
     MAX_RETRIES times if the output doesn't meet the standard.
     Call this for each bullet the user has selected to improve.
+    The bullet's current text is read from session state by its id — do NOT pass
+    the bullet text yourself.
 
     Args:
-        original_bullet: The current bullet text to rewrite.
+        bullet_id: The id of the bullet to rewrite (from parse_resume output or
+                   an analyze_jd_match suggestion's 'target' field).
         instruction: What to change, e.g. 'quantify the impact' or
                      'add specific technologies used'.
         context: Dict with optional keys:
@@ -117,20 +141,25 @@ def rewrite_bullet(original_bullet: str, instruction: str, context: dict) -> dic
 
     Returns:
         A dict with:
-          - new_bullet: the rewritten bullet (best attempt after retries)
+          - bullet_id: the id that was rewritten
+          - new_bullet: the rewritten bullet (best attempt after retries), now
+            also written into the resume in session state
+          - previous_content: the bullet text before the rewrite
           - validation: output of _check_bullet_rubric on the final bullet
-          - attempts: number of tries taken (1 to MAX_RETRIES)
+          - attempts: number of tries taken (0 if the original already passed)
           - warning: present only if rubric was not satisfied after MAX_RETRIES attempts
+          - error: present only if the resume or the bullet_id could not be found
 
     Behavior (the retry loop — this is the core of this function):
-        for attempt in 1..MAX_RETRIES:
-            1. Call Gemini with a prompt that includes original_bullet, instruction,
+        Read the original bullet from state, then for attempt in 1..MAX_RETRIES:
+            1. Call Gemini with a prompt that includes the original bullet, instruction,
                and any available context fields (role, tech_stack, jd snippet).
             2. Strip the response to get the raw bullet string.
             3. Run _check_bullet_rubric on it.
-            4. If passed → return immediately with attempts count.
-            5. If failed → append the violations to the instruction for the next attempt.
-        After MAX_RETRIES, return the last attempt's bullet with a warning.
+            4. If passed → stop early.
+            5. If failed → append the violations to the next attempt's prompt.
+        Write the final bullet (passed, or best effort after MAX_RETRIES) back into
+        state['resume_json'] and return it; include a warning if it never passed.
 
     Prompt rules to enforce:
         - Start with a strong past-tense action verb
@@ -138,60 +167,78 @@ def rewrite_bullet(original_bullet: str, instruction: str, context: dict) -> dic
         - Keep under 180 characters
         - Return ONLY the bullet text, no quotes or explanation
     """
+    context = context or {}
+
+    resume_json = tool_context.state.get("resume_json") if tool_context else None
+    if not resume_json:
+        return {"error": "No resume found in session. Please parse a resume first."}
+
+    bullet = _find_bullet(resume_json, bullet_id)
+    if bullet is None:
+        return {"error": f"Bullet id '{bullet_id}' not found in resume."}
+
+    original_bullet = bullet.get("content", "")
+
     validation = _check_bullet_rubric(original_bullet)
 
     if validation["passed"]:
+        # Already meets the rubric — leave state untouched, nothing to rewrite.
         return {
+            "bullet_id": bullet_id,
             "new_bullet": original_bullet,
+            "previous_content": original_bullet,
             "validation": validation,
             "attempts": 0,
         }
 
-    else:
-        for attempt in range(1, MAX_RETRIES + 1):
-            # Construct the prompt for Gemini
-            prompt = f"Rewrite the following resume bullet to be stronger and more impactful.\n\n"
-            prompt += (
-                "CRITICAL TRUTHFULNESS RULE: Use ONLY facts present in the original bullet "
-                "or explicitly given below. NEVER invent technologies, frameworks, tools, "
-                "metrics, numbers, or details the user did not state (e.g. do not add "
-                "'LangChain', '30%', etc. unless they appear in the input). You may rephrase "
-                "and strengthen wording, but you must not fabricate facts. If the bullet "
-                "lacks quantifiable data, improve the phrasing without inventing numbers.\n\n"
-            )
-            prompt += f"Original Bullet: {original_bullet}\n"
-            prompt += f"Instruction: {instruction}\n"
-            if context.get("experience_role"):
-                prompt += f"Role: {context['experience_role']}\n"
-            if context.get("tech_stack"):
-                prompt += f"Tech Stack: {', '.join(context['tech_stack'])}\n"
-            if context.get("jd_text"):
-                prompt += f"Job Description Snippet: {context['jd_text']}\n"
-            if attempt > 1:
-                prompt += f"Previous attempt failed checks: {', '.join(validation['violations'])}\n"
-            prompt += "Please return ONLY the rewritten bullet text, no quotes or explanations."
+    new_bullet = original_bullet
+    for attempt in range(1, MAX_RETRIES + 1):
+        # Construct the prompt for Gemini
+        prompt = f"Rewrite the following resume bullet to be stronger and more impactful.\n\n"
+        prompt += (
+            "CRITICAL TRUTHFULNESS RULE: Use ONLY facts present in the original bullet "
+            "or explicitly given below. NEVER invent technologies, frameworks, tools, "
+            "metrics, numbers, or details the user did not state (e.g. do not add "
+            "'LangChain', '30%', etc. unless they appear in the input). You may rephrase "
+            "and strengthen wording, but you must not fabricate facts. If the bullet "
+            "lacks quantifiable data, improve the phrasing without inventing numbers.\n\n"
+        )
+        prompt += f"Original Bullet: {original_bullet}\n"
+        prompt += f"Instruction: {instruction}\n"
+        if context.get("experience_role"):
+            prompt += f"Role: {context['experience_role']}\n"
+        if context.get("tech_stack"):
+            prompt += f"Tech Stack: {', '.join(context['tech_stack'])}\n"
+        if context.get("jd_text"):
+            prompt += f"Job Description Snippet: {context['jd_text']}\n"
+        if attempt > 1:
+            prompt += f"Previous attempt failed checks: {', '.join(validation['violations'])}\n"
+        prompt += "Please return ONLY the rewritten bullet text, no quotes or explanations."
 
-            # Call Gemini
-            model = GenerativeModel(
-                "gemini-2.5-flash"
-            )  # Implement this function to call Gemini
-            response = model.generate_content(prompt)
-            new_bullet = response.text.strip()
+        # Call Gemini
+        model = GenerativeModel("gemini-2.5-flash")
+        response = model.generate_content(prompt)
+        new_bullet = response.text.strip()
 
-            # Validate the new bullet against the rubric
-            validation = _check_bullet_rubric(new_bullet)
+        # Validate the new bullet against the rubric
+        validation = _check_bullet_rubric(new_bullet)
 
-            if validation["passed"]:
-                return {
-                    "new_bullet": new_bullet,
-                    "validation": validation,
-                    "attempts": attempt,
-                }
+        if validation["passed"]:
+            break
 
-        # If we exhaust all attempts without passing, return the last attempt with a warning
-        return {
-            "new_bullet": new_bullet,
-            "validation": validation,
-            "attempts": MAX_RETRIES,
-            "warning": validation["violations"],
-        }
+    # Write the final bullet (passed, or best effort) back into session state.
+    # Mutate the bullet in place, then reassign the top-level key so ADK's
+    # delta-aware state actually records and persists the change.
+    bullet["content"] = new_bullet
+    tool_context.state["resume_json"] = resume_json
+
+    result = {
+        "bullet_id": bullet_id,
+        "new_bullet": new_bullet,
+        "previous_content": original_bullet,
+        "validation": validation,
+        "attempts": attempt,
+    }
+    if not validation["passed"]:
+        result["warning"] = validation["violations"]
+    return result

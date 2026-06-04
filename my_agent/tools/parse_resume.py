@@ -7,6 +7,33 @@ from google.adk.tools import ToolContext
 from vertexai.generative_models import GenerativeModel
 
 
+def _normalize_schema(resume_json: dict) -> dict:
+    """Rename known drift keys back to the canonical schema, in place.
+
+    The parse prompt forbids these synonyms, but prompt constraints are
+    probabilistic — this makes the fix deterministic so downstream code
+    (the Jinja template, rewrite_bullet) can rely on the canonical keys.
+    """
+
+    def _rename(d: dict, old: str, new: str) -> None:
+        if isinstance(d, dict) and old in d and not d.get(new):
+            d[new] = d.pop(old)
+
+    for edu in resume_json.get("education") or []:
+        _rename(edu, "institution", "school")
+
+    for proj in resume_json.get("projects") or []:
+        _rename(proj, "title", "name")
+
+    for entry in (resume_json.get("experience") or []) + (resume_json.get("projects") or []):
+        for bullet in entry.get("bullets") or []:
+            if isinstance(bullet, dict):
+                for old in ("text", "item", "description"):
+                    _rename(bullet, old, "content")
+
+    return resume_json
+
+
 def parse_resume(raw_text: str, source_format: str = "text", tool_context: ToolContext = None) -> dict:
     """
     Parse a resume into structured JSON with sections for education, experience,
@@ -83,6 +110,7 @@ Resume:
 
     try:
         resume_json = json.loads(text)
+        resume_json = _normalize_schema(resume_json)
         # Store the parsed resume in session state as the single source of truth.
         # Downstream tools (analyze, check, render, save) read it from here instead
         # of receiving it as a parameter, so the large JSON never enters a function call.
