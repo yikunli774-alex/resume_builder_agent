@@ -102,6 +102,49 @@ def _check_bullet_rubric(bullet: str) -> dict:
     }
 
 
+# Rendered-line geometry for the jakes_resume template (10pt Times, ~7.2in text
+# width). Used only as a SOFT goal: the rewrite tries to hit it but is never
+# failed for missing it.
+LINE_CAPACITY = 90      # approx chars that fit on one rendered bullet line
+ORPHAN_SECOND = 20      # a 2nd line shorter than this is 1-2 orphan words
+TWO_LINE_MIN = 135      # if it wraps, aim for at least this so line 2 is >half full
+
+
+def _check_line_fit(bullet: str) -> dict:
+    """Soft, deterministic line-fit check (advice only — never blocks a rewrite).
+
+    Returns {"ok": bool, "feedback": str}. `feedback` is an actionable note for
+    the LLM, empty when ok. The bias is always toward TRIMMING (resumes should be
+    tight), so a short single line is fine and we never tell the model to pad —
+    that would invite filler/fabrication, which the truthfulness rule forbids.
+    """
+    n = len(bullet.strip())
+
+    # One line is always acceptable, however short. Never pad to fill it.
+    if n <= LINE_CAPACITY:
+        return {"ok": True, "feedback": ""}
+
+    second = n - LINE_CAPACITY
+    if second < ORPHAN_SECOND:
+        return {
+            "ok": False,
+            "feedback": (
+                f"The bullet ({n} chars) spills only 1-2 orphan words onto a second line; "
+                f"tighten the wording to fit one line (<= {LINE_CAPACITY} chars)."
+            ),
+        }
+    if n < TWO_LINE_MIN:
+        return {
+            "ok": False,
+            "feedback": (
+                f"The bullet ({n} chars) wraps to a second line that is less than half full; "
+                f"prefer tightening it to one line (<= {LINE_CAPACITY} chars). Only if the extra "
+                f"detail is truthful and worth keeping, expand past {TWO_LINE_MIN} chars instead."
+            ),
+        }
+    return {"ok": True, "feedback": ""}
+
+
 def _find_bullet(resume_json: dict, bullet_id: str):
     """Locate a bullet by id across experience[] and projects[].
 
@@ -146,6 +189,8 @@ def rewrite_bullet(
             also written into the resume in session state
           - previous_content: the bullet text before the rewrite
           - validation: output of _check_bullet_rubric on the final bullet
+          - line_fit: output of _check_line_fit (soft wrap check; advice only,
+            never affects validation/warning)
           - attempts: number of tries taken (0 if the original already passed)
           - warning: present only if rubric was not satisfied after MAX_RETRIES attempts
           - error: present only if the resume or the bullet_id could not be found
@@ -165,6 +210,11 @@ def rewrite_bullet(
         - Start with a strong past-tense action verb
         - Include at least one quantifiable metric
         - Keep under 180 characters
+        - Soft line-fit goal: prefer one line (~90 chars or fewer) or, if it wraps,
+          ~135+ chars so line two is over half full; avoid the ~90-135 orphan range.
+          Advisory only — it never fails the bullet and never forces an extra retry;
+          its feedback just rides along on retries the hard rubric already triggered.
+          Biased toward trimming, never padding (truthfulness).
         - Return ONLY the bullet text, no quotes or explanation
     """
     context = context or {}
@@ -192,6 +242,7 @@ def rewrite_bullet(
         }
 
     new_bullet = original_bullet
+    feedback = []      # hard-rubric + line-fit notes carried into the next attempt
     for attempt in range(1, MAX_RETRIES + 1):
         # Construct the prompt for Gemini
         prompt = f"Rewrite the following resume bullet to be stronger and more impactful.\n\n"
@@ -203,6 +254,14 @@ def rewrite_bullet(
             "and strengthen wording, but you must not fabricate facts. If the bullet "
             "lacks quantifiable data, improve the phrasing without inventing numbers.\n\n"
         )
+        prompt += (
+            "LINE-FIT GOAL (try to meet this, but it is secondary to truthfulness and the "
+            "rules above): one bullet line holds about 90 characters. Prefer a single line "
+            "of up to ~90 characters. If the content genuinely needs a second line, fill it "
+            "past half (~135+ characters). Avoid the 90-135 range, which leaves one or two "
+            "orphan words on a second line. Never pad with filler just to fill space — a "
+            "short, truthful line is better than a padded one.\n\n"
+        )
         prompt += f"Original Bullet: {original_bullet}\n"
         prompt += f"Instruction: {instruction}\n"
         if context.get("experience_role"):
@@ -211,8 +270,8 @@ def rewrite_bullet(
             prompt += f"Tech Stack: {', '.join(context['tech_stack'])}\n"
         if context.get("jd_text"):
             prompt += f"Job Description Snippet: {context['jd_text']}\n"
-        if attempt > 1:
-            prompt += f"Previous attempt failed checks: {', '.join(validation['violations'])}\n"
+        if attempt > 1 and feedback:
+            prompt += f"Fix these issues from the previous attempt: {' '.join(feedback)}\n"
         prompt += "Please return ONLY the rewritten bullet text, no quotes or explanations."
 
         # Call Gemini
@@ -220,11 +279,20 @@ def rewrite_bullet(
         response = model.generate_content(prompt)
         new_bullet = response.text.strip()
 
-        # Validate the new bullet against the rubric
+        # Hard rubric (pass/fail) + soft line-fit (advice only).
         validation = _check_bullet_rubric(new_bullet)
+        fit = _check_line_fit(new_bullet)
 
+        # Stop as soon as the hard rubric passes — line-fit never triggers an
+        # extra retry on its own. Its advice only rides along on retries that
+        # the hard rubric already forced, nudging wrap without costing calls.
         if validation["passed"]:
             break
+
+        # Carry both kinds of feedback into the next attempt.
+        feedback = list(validation["violations"])
+        if not fit["ok"]:
+            feedback.append(fit["feedback"])
 
     # Write the final bullet (passed, or best effort) back into session state.
     # Mutate the bullet in place, then reassign the top-level key so ADK's
@@ -237,6 +305,7 @@ def rewrite_bullet(
         "new_bullet": new_bullet,
         "previous_content": original_bullet,
         "validation": validation,
+        "line_fit": fit,
         "attempts": attempt,
     }
     if not validation["passed"]:

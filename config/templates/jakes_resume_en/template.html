@@ -30,16 +30,14 @@
 {% for edu in resume.education %}
 <div class="entry-header">
   <span class="left">{{ edu.school }}</span>
-  <span class="right">{{ edu.start_date or "" }}{% if edu.end_date %} – {{ edu.end_date }}{% endif %}</span>
+  <span class="right"><strong>{% if edu.start_date %}{{ edu.start_date | replace("-", "/") }}{% if edu.end_date %} – {{ edu.end_date | replace("-", "/") }}{% endif %}{% elif edu.end_date %}{{ edu.end_date | replace("-", "/") }}{% endif %}</strong></span>
 </div>
 <div class="entry-subheader">
-  <span>{{ edu.degree }}{% if edu.major %}, {{ edu.major }}{% endif %}</span>
+  <span>{{ edu.degree }}{% if edu.major and edu.major not in edu.degree %}, {{ edu.major }}{% endif %}</span>
   {% if edu.gpa %}<span class="gpa">GPA: {{ edu.gpa }}</span>{% endif %}
 </div>
 {% if edu.details %}
-<ul class="bullets">
-  {% for detail in edu.details %}<li>{{ detail }}</li>{% endfor %}
-</ul>
+<div class="skills-row"><strong>Relevant Coursework:</strong> {{ edu.details | join(", ") }}</div>
 {% endif %}
 {% endfor %}
 {% endif %}
@@ -50,7 +48,7 @@
 {% for exp in resume.experience %}
 <div class="entry-header">
   <span class="left">{{ exp.company }}</span>
-  <span class="right">{{ exp.start_date or "" }}{% if exp.end_date %} – {{ exp.end_date }}{% endif %}</span>
+  <span class="right"><strong>{% if exp.start_date %}{{ exp.start_date | replace("-", "/") }}{% if exp.end_date %} – {{ exp.end_date | replace("-", "/") }}{% endif %}{% elif exp.end_date %}{{ exp.end_date | replace("-", "/") }}{% endif %}</strong></span>
 </div>
 <div class="entry-subheader">
   <span>{{ exp.role }}</span>
@@ -70,7 +68,7 @@
 {% for proj in resume.projects %}
 <div class="entry-header">
   <span class="left">{{ proj.name }}</span>
-  <span class="right">{{ proj.start_date or "" }}{% if proj.end_date %} – {{ proj.end_date }}{% endif %}</span>
+  <span class="right"><strong>{% if proj.start_date %}{{ proj.start_date | replace("-", "/") }}{% if proj.end_date %} – {{ proj.end_date | replace("-", "/") }}{% endif %}{% elif proj.end_date %}{{ proj.end_date | replace("-", "/") }}{% endif %}</strong></span>
 </div>
 {% if proj.tech_stack %}
 <div class="entry-subheader">
