@@ -12,12 +12,13 @@ Java analogy:
 """
 
 import asyncio
-import base64
+import io
 import os
 import sys
 import uuid
 from pathlib import Path
 
+import pdfplumber
 import streamlit as st
 
 # Make sure the project root is on the path so `my_agent` is importable
@@ -42,8 +43,14 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-st.title("📄 Resume Agent")
-st.caption("Upload your resume, paste a JD, and let the agent tailor it for you.")
+# Compact header bar — keeps the working area tight instead of a big centered title
+st.markdown(
+    "<div style='display:flex;align-items:baseline;gap:10px;margin:-8px 0 6px;'>"
+    "<span style='font-size:19px;font-weight:600;'>📄 Resume Agent</span>"
+    "<span style='color:#888;font-size:13px;'>paste your resume, then a JD, into the chat — the agent tailors it</span>"
+    "</div>",
+    unsafe_allow_html=True,
+)
 
 # ── Session state bootstrap ───────────────────────────────────────────────────
 if "session_id" not in st.session_state:
@@ -94,8 +101,10 @@ def chat(user_text: str) -> str:
             for part in event.content.parts:
                 if hasattr(part, "text") and part.text:
                     reply_parts.append(part.text)
-                # If a tool returned html_preview, capture it
-                if hasattr(part, "function_response"):
+                # If a tool returned html_preview, capture it. NOTE: a Part always
+                # HAS a `function_response` attribute (it is just None for text /
+                # function_call parts), so check the value, not just the attribute.
+                if getattr(part, "function_response", None) is not None:
                     resp = part.function_response.response or {}
                     if resp.get("html_preview"):
                         st.session_state.html_preview = resp["html_preview"]
@@ -106,85 +115,74 @@ def chat(user_text: str) -> str:
 
 
 # ── Layout: two columns ───────────────────────────────────────────────────────
-left, right = st.columns([1, 1], gap="large")
+left, right = st.columns([1, 1], gap="medium")
 
-# ── LEFT: upload panel + chat ────────────────────────────────────────────────
+# ── LEFT: chat ────────────────────────────────────────────────────────────────
 with left:
-    st.subheader("Chat")
-
-    # File upload — sends PDF content to agent as a first message
-    uploaded = st.file_uploader("Upload resume (PDF)", type=["pdf"], key="uploader")
-    if uploaded and not st.session_state.get("resume_uploaded"):
-        pdf_b64 = base64.b64encode(uploaded.read()).decode()
-        intro = (
-            f"I've uploaded my resume (PDF). Here it is as base64:\n{pdf_b64}\n\n"
-            "Please parse it using the parse_resume tool with source_format='pdf'."
+    # Resume PDF upload tucked into an expander to keep the chat area clean.
+    # We extract the text locally with pdfplumber and send only that text to the
+    # agent — raw PDF bytes never go through the LLM (that path hangs).
+    with st.expander("📎 Upload resume PDF (optional)", expanded=False):
+        uploaded = st.file_uploader(
+            "PDF", type=["pdf"], key="uploader", label_visibility="collapsed"
         )
-        with st.spinner("Parsing resume…"):
-            reply = chat(intro)
-        st.session_state.messages.append({"role": "user", "content": "📎 Resume uploaded"})
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-        st.session_state.resume_uploaded = True
-        st.rerun()
-
-    # JD input
-    jd_text = st.text_area("Paste job description (optional)", height=120, key="jd_input")
-    if st.button("Analyze JD match") and jd_text.strip():
-        msg = f"Here is the job description I want to target:\n\n{jd_text}\n\nPlease analyze how well my resume matches it."
-        with st.spinner("Analyzing…"):
-            reply = chat(msg)
-        st.session_state.messages.append({"role": "user", "content": "JD submitted for analysis"})
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-        st.rerun()
-
-    st.divider()
-
-    # Conversation history
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    # Chat input
-    if prompt := st.chat_input("Talk to the agent…"):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking…"):
-                reply = chat(prompt)
-            st.markdown(reply)
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-        st.rerun()
-
-# ── RIGHT: resume preview + download ─────────────────────────────────────────
-with right:
-    st.subheader("Resume Preview")
-
-    if st.session_state.html_preview:
-        st.components.v1.html(st.session_state.html_preview, height=900, scrolling=True)
-
-        # Download PDF if available
-        if st.session_state.pdf_path and Path(st.session_state.pdf_path).exists():
-            with open(st.session_state.pdf_path, "rb") as f:
-                st.download_button(
-                    label="⬇ Download PDF",
-                    data=f.read(),
-                    file_name="resume.pdf",
-                    mime="application/pdf",
+        if uploaded and not st.session_state.get("resume_uploaded"):
+            with pdfplumber.open(io.BytesIO(uploaded.read())) as pdf:
+                resume_text = "\n".join(
+                    page.extract_text() for page in pdf.pages if page.extract_text()
                 )
+            intro = (
+                f"Here is my resume:\n\n{resume_text}\n\n"
+                "Please parse it with the parse_resume tool."
+            )
+            with st.spinner("Parsing resume…"):
+                reply = chat(intro)
+            st.session_state.messages.append({"role": "user", "content": "📎 Resume uploaded"})
+            st.session_state.messages.append({"role": "assistant", "content": reply})
+            st.session_state.resume_uploaded = True
+            st.rerun()
 
-        if st.button("Render / refresh PDF"):
-            with st.spinner("Rendering…"):
-                reply = chat("Please render my current resume draft as a PDF using the jakes_resume_en template.")
+    # Fixed-height scrollable history so the chat never grows the page endlessly.
+    history = st.container(height=470)
+    with history:
+        if not st.session_state.messages:
+            st.caption("Paste or upload your resume to start, then paste the target job description.")
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+    if prompt := st.chat_input("Paste your resume or a JD, or talk to the agent…"):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.spinner("Thinking…"):
+            reply = chat(prompt)
+        st.session_state.messages.append({"role": "assistant", "content": reply})
+        st.rerun()
+
+# ── RIGHT: resume preview ─────────────────────────────────────────────────────
+with right:
+    if st.session_state.html_preview:
+        st.components.v1.html(st.session_state.html_preview, height=620, scrolling=True)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.session_state.pdf_path and Path(st.session_state.pdf_path).exists():
+                with open(st.session_state.pdf_path, "rb") as f:
+                    st.download_button(
+                        "⬇ Download PDF", data=f.read(), file_name="resume.pdf",
+                        mime="application/pdf", use_container_width=True,
+                    )
+        with c2:
+            if st.button("⟳ Refresh PDF", use_container_width=True):
+                with st.spinner("Rendering…"):
+                    reply = chat("Please render my current resume draft as a PDF using the jakes_resume_en template.")
+                st.session_state.messages.append({"role": "assistant", "content": reply})
+                st.rerun()
+    else:
+        st.info("Preview appears here once the agent renders your resume.")
+
+    with st.expander("🗂 Version history", expanded=False):
+        if st.button("Refresh history", use_container_width=True):
+            with st.spinner("Loading…"):
+                reply = chat("List all my saved resume versions.")
             st.session_state.messages.append({"role": "assistant", "content": reply})
             st.rerun()
-    else:
-        st.info("The resume preview will appear here once you upload a resume and the agent parses it.")
-
-    st.divider()
-    st.subheader("Version History")
-    if st.button("Refresh history"):
-        with st.spinner("Loading…"):
-            reply = chat("List all my saved resume versions.")
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-        st.rerun()
