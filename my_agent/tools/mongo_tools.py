@@ -117,7 +117,9 @@ def list_resume_versions(user_session: str = "default") -> dict:
 def load_resume_version(version_id: str) -> dict:
     """
     Load the full content of a specific saved resume version by its ID.
-    Call this when the user wants to view, compare, or continue editing a past version.
+    Call this when the user wants to view or compare a past version. NOTE: this
+    does NOT restore the version into the session working draft — editing and
+    rendering tools still operate on the current draft, not the loaded one.
 
     Args:
         version_id: The version ID string returned by save_resume_version or list_resume_versions.

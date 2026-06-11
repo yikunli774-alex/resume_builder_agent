@@ -284,11 +284,50 @@ Streamlit 前端（frontend/app.py）上传 PDF 后，"Parsing resume…" 转圈
 
 ---
 
+## 2026-06-11 — 流式实测修复 + prompt 全面审计 + edit_resume 结构性 CRUD
+
+### 踩坑：st.status 不能嵌进 st.expander
+- 浏览器实测流式第一发就炸：`StreamlitAPIException: Expanders may not be nested`。`st.status` 底层就是 expander，而 PDF 上传区本身是 expander。
+- 修法：expander 里只做 pdfplumber 抽文本存变量，`st.status` + `chat()` 挪到 expander 外执行。
+- 顺带修：`status.update(label)` 和 `status.write(label)` 写同一内容 → 标题/正文重复。改成分工：**标题 = 进行中步骤（function_call 到达时 update），正文 = 完成清单（function_response 到达时写 "✓ …"）**。
+
+### 踩坑：agent 把整段 HTML 贴进聊天
+- 根因不是模型抽风，是 instruction 自己要求的：PHASE 3.6 / 5.1 写着 "present that rendered HTML preview"——adk web 时代的遗物，那会儿没有右栏预览。
+- 修法：渲染照旧强制，但明令禁止在回复里贴/嵌 HTML，改为简短总结 + 指引看预览栏。
+- 教训：**UI 形态变了，prompt 里"怎么展示"的指令必须跟着改**——prompt 和前端之间也有契约。
+
+### 决策：Version history 直连工具函数，不走编排器
+- `list_resume_versions` 是纯数据查询，前端直接 import 调用，毫秒级返回渲染在右栏，省掉 20s+ 的 LLM 来回，也不再让主 agent 在聊天里念列表。
+- 原则一脉相承：**确定性数据操作不该穿过 LLM**（同 base64 不穿 LLM、suggestion 排序靠代码）。
+
+### 事故：要求加新项目 → agent 把经历挂到别的项目名下（misattribution）
+- 现象：用户批准加 "AI Resume Builder" 项目；agent 说加不了，转头把这段经历写成 Dungeon Drifters（Java 红黑树项目）下的一条 bullet——简历造假的新变种，披着"整合经验"外衣的 hallucinated rationalization。
+- 复盘上一会话"成功加项目"的真相：它当时也调 edit_resume **失败了**，然后自己重拼简历文本再 parse_resume 整份覆盖（原话 "manually reconstruct … re-parse"）。副作用不可见但真实：id 全部重生成、此前 rewrite 成果静默丢失。
+- **同一能力缺口的两种症状**：钻空子（re-parse hack）或造假（misattribution），取决于 LLM 当天怎么掷骰子。
+- 根因链：① edit_resume 当初选最小范围，没有结构性 CRUD；② instruction 承诺了 reorder / add bullet 却没工具（"空头支票"第二季，上一季是 edit skills）；③ SESSION STATE 禁令只封了 "JSON" 没封"文本重拼再 parse"。
+
+### Prompt 全面审计：10 处矛盾一次清掉
+- 方法：把 instruction / description / 工具 docstring **逐句对照真实工具签名 + 模板 + 前端 UI**，每个"承诺的动作"打勾验证。
+- 修掉的：description 称支持 PDF（方向A 已删）和中英双模板（只有 jakes_resume_en）；PHASE 5 "Provide the download link"（agent 给不了链接，只会编假的——和贴 HTML 同病：对 UI 现实的过时假设）；"tags" vs 单 label 参数；PHASE 3 checkboxes（Streamlit 聊天渲染不了）；SCHEMA / PHASE 4 / VOICE 的无工具承诺；re-parse 漏洞补封"文本"路径；新增 misattribution 禁令；`load_resume_version` docstring 的 "continue editing" 谎言（它不写 state，载入 ≠ 可编辑，编辑仍落在旧草稿上）。
+- 教训：**docstring 也是 prompt**。工具 docstring 直接喂给 Gemini 当说明书，它说谎和 instruction 说谎一样毒。
+- 教训：空头支票只有两种处理——补工具，或明说做不到。**留灰色地带 = 邀请 LLM 自由发挥**。
+
+### edit_resume 结构性 CRUD（补上当初的最小范围欠账）
+- 3 个新 operation：`add_entry`（**两步走**：先建带标题的骨架拿 new_id，字段用 set 补、bullet 逐条加——一次传整个 entry JSON 就回到 MALFORMED 老路）、`remove_entry`（错 id 返回有效 id，自纠错套路）、`move`（调 entry 顺序）；`bullets` 进白名单：add 存用户原文 + 生成 id、remove 按 id、set 被拒并指路 rewrite_bullet（rubric 职责不变）。
+- id 生成：前缀（p/ex/ed/b）+ 递增，对全简历已有 id 查重——parse 让 Gemini 自由起 id 风格不可预设，查重兜底任何风格都不撞。
+- 骨架含模板渲染的全部字段（空串占位），半成品 entry 也能干净渲染；列表字段逐个复制，防骨架共享引用。
+- 验证：离线 25/25 全绿（CRUD 全流程、错误路径、老操作回归、**CRUD 后真渲染** HTML 验证内容增删）。
+- prompt 成对开关翻转：诚实补丁里 4 处 "NOT SUPPORTED" 全部换成新操作用法；re-parse / misattribution 禁令**保留**——正路开了，邪路照样焊死。
+- 残留：浏览器端到端（真编排器调 add_entry）未测；load_resume_version 行为修复（载入写回 state）未做，docstring 已先改诚实。
+
+---
+
 ## 待办 / 待定疑问
 
 - [x] ~~**前端 PDF 上传卡死 → 方向 A**~~ ✅ 2026-06-09 落地：前端 pdfplumber 本地抽文本只发文本；`parse_resume` 删 pdf 分支 + 去 source_format 参数。真 PDF 端到端验证通过（见上）。
-- [ ] **流式工具进度（UX）**：把 `runner.run()` 的中间 function_call 事件实时显示（"正在解析/渲染…"），让 ~25s 阻塞不像死掉。事件已有，只需改前端 `chat()`。真正提速（关 thinking / parse 不走编排器）另议。
-- [ ] **统一编辑器后续（结构性 CRUD）**：`edit_resume` 已覆盖字段/列表项；新增/删除整条 experience/project entry、reorder 顺序、add/remove bullet 暂未做（当时选了最小范围 A）。需要再补。
+- [x] ~~**流式工具进度（UX）**~~ ✅ 2026-06-11 落地并浏览器实测（修掉 st.status 嵌套崩溃 + 标题/正文去重）。
+- [x] ~~**统一编辑器后续（结构性 CRUD）**~~ ✅ 2026-06-11 完成：add_entry/remove_entry/move + bullets add/remove，离线 25/25；浏览器端到端待测（见上）。
+- [ ] **load_resume_version 写回 state**："载入旧版本继续编辑"目前是假的（不写 state，编辑落在当前草稿）。docstring 已改诚实，行为修复待做（加 tool_context 写回，连带浏览器验证）。
 - [ ] **min_bullets_per_experience 阈值**：spec 是 `< 2`（只有1条才算少），但觉得太死板，2 条也算少。倾向改成 `< 3`。待定。
 - [ ] **rewrite has_quantification 是否放宽**（见上）。待定。
 - [x] ~~**MALFORMED_FUNCTION_CALL 治本**~~ ✅ session state 第一期已实现，2026-06-07 经 `adk api_server` 端到端确认：save+render 双调用 200、无 MALFORMED（见上）。

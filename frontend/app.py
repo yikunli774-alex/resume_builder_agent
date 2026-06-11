@@ -34,6 +34,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
 import my_agent.agent as agent_module
+from my_agent.tools.mongo_tools import list_resume_versions
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -119,18 +120,24 @@ def chat(user_text: str, status=None) -> str:
         # Capture tool output side-effects for preview updates
         if hasattr(event, "content") and event.content:
             for part in event.content.parts:
-                # Surface each tool call as live progress.
+                # Surface live progress: title = step in progress,
+                # body = log of completed steps (avoids title/body duplication).
                 fc = getattr(part, "function_call", None)
                 if fc is not None and status is not None:
                     label = _TOOL_LABELS.get(fc.name, f"⚙️ {fc.name}…")
                     status.update(label=label)
-                    status.write(label)
                 if hasattr(part, "text") and part.text:
                     reply_parts.append(part.text)
                 # If a tool returned html_preview, capture it. NOTE: a Part always
                 # HAS a `function_response` attribute (it is just None for text /
                 # function_call parts), so check the value, not just the attribute.
                 if getattr(part, "function_response", None) is not None:
+                    if status is not None:
+                        done = _TOOL_LABELS.get(
+                            part.function_response.name,
+                            f"⚙️ {part.function_response.name}…",
+                        )
+                        status.write("✓ " + done.rstrip("…"))
                     resp = part.function_response.response or {}
                     if resp.get("html_preview"):
                         st.session_state.html_preview = resp["html_preview"]
@@ -148,26 +155,32 @@ with left:
     # Resume PDF upload tucked into an expander to keep the chat area clean.
     # We extract the text locally with pdfplumber and send only that text to the
     # agent — raw PDF bytes never go through the LLM (that path hangs).
+    # NOTE: st.status is itself an expander, so it must live OUTSIDE this
+    # expander (nesting raises StreamlitAPIException). Extract text here,
+    # run the agent below.
+    pending_resume_text = None
     with st.expander("📎 Upload resume PDF (optional)", expanded=False):
         uploaded = st.file_uploader(
             "PDF", type=["pdf"], key="uploader", label_visibility="collapsed"
         )
         if uploaded and not st.session_state.get("resume_uploaded"):
             with pdfplumber.open(io.BytesIO(uploaded.read())) as pdf:
-                resume_text = "\n".join(
+                pending_resume_text = "\n".join(
                     page.extract_text() for page in pdf.pages if page.extract_text()
                 )
-            intro = (
-                f"Here is my resume:\n\n{resume_text}\n\n"
-                "Please parse it with the parse_resume tool."
-            )
-            with st.status("📄 Parsing your resume…", expanded=True) as status:
-                reply = chat(intro, status)
-                status.update(label="Resume parsed", state="complete", expanded=False)
-            st.session_state.messages.append({"role": "user", "content": "📎 Resume uploaded"})
-            st.session_state.messages.append({"role": "assistant", "content": reply})
-            st.session_state.resume_uploaded = True
-            st.rerun()
+
+    if pending_resume_text:
+        intro = (
+            f"Here is my resume:\n\n{pending_resume_text}\n\n"
+            "Please parse it with the parse_resume tool."
+        )
+        with st.status("📄 Parsing your resume…", expanded=True) as status:
+            reply = chat(intro, status)
+            status.update(label="Resume parsed", state="complete", expanded=False)
+        st.session_state.messages.append({"role": "user", "content": "📎 Resume uploaded"})
+        st.session_state.messages.append({"role": "assistant", "content": reply})
+        st.session_state.resume_uploaded = True
+        st.rerun()
 
     # Fixed-height scrollable history so the chat never grows the page endlessly.
     history = st.container(height=470)
@@ -208,9 +221,24 @@ with right:
     else:
         st.info("Preview appears here once the agent renders your resume.")
 
+    # Version history is plain data — call the tool function directly and render
+    # it here, instead of a 20s+ round trip through the orchestrator LLM.
     with st.expander("🗂 Version history", expanded=False):
         if st.button("Refresh history", use_container_width=True):
             with st.spinner("Loading…"):
-                reply = chat("List all my saved resume versions.")
-            st.session_state.messages.append({"role": "assistant", "content": reply})
-            st.rerun()
+                st.session_state.version_history = (
+                    list_resume_versions().get("versions", [])
+                )
+        history_versions = st.session_state.get("version_history")
+        if history_versions is None:
+            st.caption("Click refresh to load saved versions.")
+        elif not history_versions:
+            st.caption("No saved versions yet.")
+        else:
+            for v in history_versions:
+                created = v["created_at"][:16].replace("T", " ")
+                st.markdown(
+                    f"**{v['label']}**  \n"
+                    f"{created} · {v['template_used']}  \n"
+                    f"`{v['version_id']}`"
+                )
