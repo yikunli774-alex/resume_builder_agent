@@ -15,10 +15,10 @@
     {% if resume.personal_info.phone %}{{ resume.personal_info.phone }}{% endif %}
     {% if resume.personal_info.email %}<span>|</span> {{ resume.personal_info.email }}{% endif %}
     {% if resume.personal_info.links and resume.personal_info.links.linkedin %}
-      <span>|</span> <a href="{{ resume.personal_info.links.linkedin }}">LinkedIn</a>
+      <span>|</span> <a href="{{ resume.personal_info.links.linkedin }}">{{ resume.personal_info.links.linkedin | replace("https://", "") | replace("http://", "") | replace("www.", "") | trim("/") }}</a>
     {% endif %}
     {% if resume.personal_info.links and resume.personal_info.links.github %}
-      <span>|</span> <a href="{{ resume.personal_info.links.github }}">GitHub</a>
+      <span>|</span> <a href="{{ resume.personal_info.links.github }}">{{ resume.personal_info.links.github | replace("https://", "") | replace("http://", "") | replace("www.", "") | trim("/") }}</a>
     {% endif %}
     {% if resume.personal_info.location %}<span>|</span> {{ resume.personal_info.location }}{% endif %}
   </div>

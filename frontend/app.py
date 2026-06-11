@@ -34,7 +34,9 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
 import my_agent.agent as agent_module
-from my_agent.tools.mongo_tools import list_resume_versions
+from my_agent.tools.mongo_tools import list_resume_versions, load_resume_version
+from my_agent.tools.render_template import render_template
+from types import SimpleNamespace
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -235,10 +237,43 @@ with right:
         elif not history_versions:
             st.caption("No saved versions yet.")
         else:
+            # Per-version PDF download: click ⬇ once to render (direct tool
+            # calls, no LLM round trip, working draft untouched), then the
+            # button becomes a real download. Bytes cached per version_id.
+            pdf_cache = st.session_state.setdefault("version_pdfs", {})
             for v in history_versions:
+                vid = v["version_id"]
                 created = v["created_at"][:16].replace("T", " ")
-                st.markdown(
-                    f"**{v['label']}**  \n"
-                    f"{created} · {v['template_used']}  \n"
-                    f"`{v['version_id']}`"
-                )
+                info, action = st.columns([5, 1])
+                with info:
+                    st.markdown(
+                        f"**{v['label']}**  \n"
+                        f"{created} · {v['template_used']}  \n"
+                        f"`{vid}`"
+                    )
+                with action:
+                    if vid in pdf_cache:
+                        st.download_button(
+                            "⬇", data=pdf_cache[vid],
+                            file_name=f"{v['label'].replace('/', '-')}.pdf",
+                            mime="application/pdf", key=f"dl_{vid}",
+                            help="Save PDF",
+                        )
+                    elif st.button("⬇", key=f"render_{vid}", help="Render PDF"):
+                        with st.spinner("Rendering…"):
+                            doc = load_resume_version(vid)  # code mode: no state touch
+                            if "error" in doc:
+                                st.error(doc["error"])
+                            else:
+                                res = render_template(
+                                    template_name=v["template_used"],
+                                    output_format="pdf",
+                                    tool_context=SimpleNamespace(
+                                        state={"resume_json": doc["resume_json"]}
+                                    ),
+                                )
+                                if res.get("file_path"):
+                                    pdf_cache[vid] = Path(res["file_path"]).read_bytes()
+                                else:
+                                    st.error(res.get("error") or "PDF rendering failed")
+                        st.rerun()

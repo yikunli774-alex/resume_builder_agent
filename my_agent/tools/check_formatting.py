@@ -30,6 +30,8 @@ def check_formatting(template_name: str = "jakes_resume_en", tool_context: ToolC
         5. min_bullets_per_experience — warning if any experience has < 2 bullets (but > 0)
         6. max_bullets_per_project — warning if any project has > 4 bullets
         7. consistent_date_format — warning if any date doesn't match YYYY-MM or 'Present'
+        8. missing_dates — warning if an education/experience/project entry has no
+           start_date or end_date (empty dates render as a blank in the template)
 
     Behavior:
         - 'passed' is False only if at least one violation has severity == 'error'.
@@ -116,7 +118,15 @@ def check_formatting(template_name: str = "jakes_resume_en", tool_context: ToolC
             for entry in resume_json.get(section, []):
                 for date_field in ["start_date", "end_date"]:
                     date_value = entry.get(date_field)
-                    if date_value and not re.fullmatch(r"\d{4}-\d{2}|Present", date_value):
+                    if not date_value:
+                        violations.append({
+                            "rule_id": "missing_dates",
+                            "severity": "warning",
+                            "target": f"{section}.{entry.get('id', '?')}.{date_field}",
+                            "message": f"{section} entry '{entry.get('id', '?')}' has no {date_field}; it will render as a blank.",
+                            "suggestion": f"Ask the user for the real date and set it via edit_resume (YYYY-MM, or 'Present' for end_date).",
+                        })
+                    elif not re.fullmatch(r"\d{4}-\d{2}|Present", date_value):
                         violations.append({
                             "rule_id": "consistent_date_format",
                             "severity": "warning",

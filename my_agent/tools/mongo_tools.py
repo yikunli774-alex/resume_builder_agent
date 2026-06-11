@@ -114,24 +114,30 @@ def list_resume_versions(user_session: str = "default") -> dict:
     return {"versions": versions}
 
 
-def load_resume_version(version_id: str) -> dict:
+def load_resume_version(version_id: str, tool_context: ToolContext = None) -> dict:
     """
-    Load the full content of a specific saved resume version by its ID.
-    Call this when the user wants to view or compare a past version. NOTE: this
-    does NOT restore the version into the session working draft — editing and
-    rendering tools still operate on the current draft, not the loaded one.
+    Restore a saved resume version as the current working draft.
+    Call this when the user wants to reopen, continue editing, render, or download
+    a past version. After this call, all editing and rendering tools operate on
+    the loaded version. WARNING: it REPLACES the current draft — if the user has
+    unsaved changes, confirm with them before loading.
 
     Args:
         version_id: The version ID string returned by save_resume_version or list_resume_versions.
 
     Returns:
-        The full document including resume_json, label, template_used, and created_at.
+        Metadata (version_id, label, template_used, created_at) plus
+        'restored': True confirming the version is now the working draft.
         Returns {'error': '...'} if the version is not found or version_id is invalid.
 
     Behavior:
         - Look up the document by ObjectId.
+        - Write doc['resume_json'] into session state as the working draft.
+        - Do NOT include resume_json in the response (it lives in state; keep
+          the response small). When called from code without a tool_context
+          (e.g. compare_versions), state is untouched and resume_json IS
+          returned for the caller to use.
         - Handle invalid ObjectId format gracefully (return error dict, don't raise).
-        - Convert _id → version_id (string) and created_at → ISO string before returning.
     """
     try:
         db = _get_db()
@@ -139,13 +145,21 @@ def load_resume_version(version_id: str) -> dict:
         if not doc:
             return {"error": "Version not found"}
 
-        return {
+        result = {
             "version_id": str(doc["_id"]),
             "label": doc["label"],
             "template_used": doc["template_used"],
             "created_at": doc["created_at"].isoformat(),
-            "resume_json": doc["resume_json"],
         }
+        if tool_context is not None:
+            # Called as a tool: restore into session state, keep the resume
+            # itself out of the model's context.
+            tool_context.state["resume_json"] = doc["resume_json"]
+            result["restored"] = True
+        else:
+            # Called from code (compare_versions): hand the data back directly.
+            result["resume_json"] = doc["resume_json"]
+        return result
     except Exception as e:
         return {"error": f"Invalid version_id: {str(e)}"}
 

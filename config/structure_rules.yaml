@@ -31,3 +31,7 @@ rules:
   - id: consistent_date_format
     severity: warning
     description: "All dates should follow YYYY-MM format (e.g. 2024-05)"
+
+  - id: missing_dates
+    severity: warning
+    description: "Every education/experience/project entry should have start_date and end_date (a missing date renders as a blank)"

@@ -1,5 +1,7 @@
 # 工程日志 / DEVLOG
 
+> English version: [DEVLOG_EN.md](DEVLOG_EN.md)
+
 记录踩过的坑、做过的技术决策、待解决的疑问。
 代码改动看 git，应该做什么看 ASSIGNMENT.md / spec —— 这里只记「为什么」和「教训」。
 
@@ -320,6 +322,42 @@ Streamlit 前端（frontend/app.py）上传 PDF 后，"Parsing resume…" 转圈
 - prompt 成对开关翻转：诚实补丁里 4 处 "NOT SUPPORTED" 全部换成新操作用法；re-parse / misattribution 禁令**保留**——正路开了，邪路照样焊死。
 - 残留：浏览器端到端（真编排器调 add_entry）未测；load_resume_version 行为修复（载入写回 state）未做，docstring 已先改诚实。
 
+## 2026-06-11（晚）— 演示前收尾批次：日期漏网 + 链接显示 + load 写回 + 版本下载
+
+### 踩坑：缺日期全链路无人管（"agent 不问我项目时间也能过"）
+- 现象：项目没日期，agent 不追问，rewrite 和 check_formatting 都放行。
+- 根因三连：① rewrite 只管 bullet 文本，日期不归它管（它无辜）；② check_formatting 日期规则是 `if date_value and …`——**有日期才查格式，缺失直接跳过**，且 warning 不翻 passed；③ PHASE 2 的澄清 prompt 全导向量化指标，没人负责"补基础字段"。
+- 修法：check_formatting 加 `missing_dates` 规则（指明哪条 entry 哪个字段，suggestion 指路 edit_resume）；instruction PHASE 3.5 加"**所有 violations 必须如实转告用户并主动提出补齐，passed=True ≠ 没问题**"。
+- 教训：工具返回了结果但 prompt 没说怎么处理结果 = 又一个灰色地带（和"调 check_formatting"只说调不说后续是同一类洞）。
+
+### 踩坑：GitHub 链接"存对了但看不见"
+- 现象：用户给了 GitHub 主页链接，agent 说加上了，简历上只显示 "GitHub" 两个字。
+- 真相：agent 一直存对了（href 里有完整 URL），是**模板把可见文字写死成 "GitHub"/"LinkedIn"**。打印 / ATS 场景下链接等于不存在。
+- 修法：模板可见文字显示真实 URL（剥 `https://`、`www.`、尾斜杠），href 不变仍可点。
+- 教训：bug 报告说"agent 没做到"，先分清是**数据层没存还是展示层没显**——这次是后者，prompt 和工具全无辜。
+
+### load_resume_version 写回 state（"存了拿不出来"修通）
+- 用户灵魂拷问：只能看和比较、不能取出来继续编辑/下载，那存它干嘛？——正中之前记录的断点（docstring 当时已改诚实，行为未修）。
+- 修法（**双模式**）：作为工具被 agent 调用（ADK 注入 ctx）→ resume_json 写回 state 成为工作草稿，返回只有元数据 + `restored: True`（**简历本体不进返回值**，避免整份灌进 context，雪球老规矩）；被代码调用（compare_versions 不传 ctx）→ 行为不变返回数据、**不碰 state**（对比旧版本不会覆盖草稿）。
+- 保护：docstring + instruction 明示"会替换当前草稿，有未保存修改先跟用户确认"。
+- 验证：真 Atlas 4/4（工具模式写回 + 响应无简历 / 代码模式返回数据 / compare 回归 / 坏 id 优雅报错）。
+- 至此数据库闭环：存 → 列 → **取回继续用** → 对比 → 下载，versioning 才算真功能。
+
+### 功能：Version history 每条版本旁 ⬇ 图标直接下载 PDF
+- 全链路零 LLM：前端直连 load（代码模式，不动草稿）→ 临时 ctx 喂 render_template 渲 PDF → 字节缓存进 session_state → 原位变成下载按钮。
+- 两段式（点一下渲染、再点一下保存）是 Streamlit `download_button` 必须先拿到字节的硬约束；按需渲染 + 缓存 > 刷新时全量预渲染（20 版本 × 2s = 40s，不可接受）。
+
+### 部署清单（演示后 / 部署前做）
+- **多用户隔离**：schema 从 Task 2 就有 `user_session` 字段，但全链路硬编码 `"default"`；前端有现成的每会话 uuid，就差接线。正解：user_session 走 session state（前端建会话时写入，工具从 ctx.state 读，不让 Gemini 填这个参数）。本地单人无感；公网部署是隐私问题（所有访客共用一个桶）。
+- 其余：Clear history 自助按钮（这次清库是手工 delete_many）、`.env` → Cloud Run 环境变量/Secret Manager、Atlas 网络白名单、Playwright/chromium 进容器镜像、InMemorySessionService → 持久 session、双层 LLM 延迟（老待办）。
+- 顺带核实：`.env` 从第一天就在 .gitignore，**从未进过任何 commit**——GitHub 访客连不上我们的 Atlas，"别人会看到我们测试数据"是虚惊（部署成共享实例才是真问题）。
+
+### 踩坑：频繁 "(no text response)" —— aiohttp 版本太老炸了 genai 的重试逻辑
+- 现象：演示前 agent 频繁整轮无回复，前端兜底显示 "(no text response)"，一个 session 日志里炸了 6 次。
+- 根因：`google-genai` 的网络重试逻辑引用 `aiohttp.ClientConnectorDNSError`（**aiohttp 3.11 才有**），环境装的是 3.10.5 → 每次普通网络抖动（本可自动重试）都让重试处理器自己 `AttributeError` 崩掉 → 模型调用硬失败、零回复。
+- 修法：`python -m pip install --upgrade aiohttp`（3.10.5 → 3.14.1）。
+- 教训：**DEVLOG 第一条（service_identity）的精确复刻**——traceback 栈在 Google 库里 ≠ Google 的锅，报错先查依赖版本。这病平时潜伏，网络一抖才发作，所以"以前好好的"不能排除依赖问题。
+
 ---
 
 ## 待办 / 待定疑问
@@ -327,7 +365,8 @@ Streamlit 前端（frontend/app.py）上传 PDF 后，"Parsing resume…" 转圈
 - [x] ~~**前端 PDF 上传卡死 → 方向 A**~~ ✅ 2026-06-09 落地：前端 pdfplumber 本地抽文本只发文本；`parse_resume` 删 pdf 分支 + 去 source_format 参数。真 PDF 端到端验证通过（见上）。
 - [x] ~~**流式工具进度（UX）**~~ ✅ 2026-06-11 落地并浏览器实测（修掉 st.status 嵌套崩溃 + 标题/正文去重）。
 - [x] ~~**统一编辑器后续（结构性 CRUD）**~~ ✅ 2026-06-11 完成：add_entry/remove_entry/move + bullets add/remove，离线 25/25；浏览器端到端待测（见上）。
-- [ ] **load_resume_version 写回 state**："载入旧版本继续编辑"目前是假的（不写 state，编辑落在当前草稿）。docstring 已改诚实，行为修复待做（加 tool_context 写回，连带浏览器验证）。
+- [x] ~~**load_resume_version 写回 state**~~ ✅ 2026-06-11（晚）双模式落地：工具调用写回 state、代码调用（compare）行为不变；真 Atlas 4/4 验证（见上）。
+- [ ] **部署清单（部署前必做，见上节）**：user_session 多用户接线、Clear history 按钮、.env → Secret Manager、Atlas 白名单、Playwright 进容器、持久 session。
 - [ ] **min_bullets_per_experience 阈值**：spec 是 `< 2`（只有1条才算少），但觉得太死板，2 条也算少。倾向改成 `< 3`。待定。
 - [ ] **rewrite has_quantification 是否放宽**（见上）。待定。
 - [x] ~~**MALFORMED_FUNCTION_CALL 治本**~~ ✅ session state 第一期已实现，2026-06-07 经 `adk api_server` 端到端确认：save+render 双调用 200、无 MALFORMED（见上）。
