@@ -83,8 +83,28 @@ if "pdf_path" not in st.session_state:
 
 
 # ── Helper: send a message to the agent and collect the reply ─────────────────
-def chat(user_text: str) -> str:
-    """Send user_text to the ADK runner, return the agent's final text reply."""
+# Friendly labels shown live while each tool runs, so a 20-30s turn shows what
+# the agent is doing instead of a frozen spinner.
+_TOOL_LABELS = {
+    "parse_resume": "📄 Parsing your resume…",
+    "analyze_jd_match": "🎯 Scoring the JD match…",
+    "rewrite_bullet": "✍️ Rewriting a bullet…",
+    "edit_resume": "🔧 Updating the resume…",
+    "check_formatting": "🔍 Checking formatting…",
+    "render_template": "🖼 Rendering the preview…",
+    "save_resume_version": "💾 Saving this version…",
+    "list_resume_versions": "🗂 Loading saved versions…",
+    "load_resume_version": "📂 Loading a saved version…",
+    "compare_versions": "🔬 Comparing versions…",
+}
+
+
+def chat(user_text: str, status=None) -> str:
+    """Send user_text to the ADK runner, return the agent's final text reply.
+
+    If a Streamlit `status` container is passed, each tool call is surfaced live
+    as progress (the runner already yields these events; we stop discarding them).
+    """
     runner: Runner = st.session_state.runner
     content = genai_types.Content(
         role="user",
@@ -99,6 +119,12 @@ def chat(user_text: str) -> str:
         # Capture tool output side-effects for preview updates
         if hasattr(event, "content") and event.content:
             for part in event.content.parts:
+                # Surface each tool call as live progress.
+                fc = getattr(part, "function_call", None)
+                if fc is not None and status is not None:
+                    label = _TOOL_LABELS.get(fc.name, f"⚙️ {fc.name}…")
+                    status.update(label=label)
+                    status.write(label)
                 if hasattr(part, "text") and part.text:
                     reply_parts.append(part.text)
                 # If a tool returned html_preview, capture it. NOTE: a Part always
@@ -135,8 +161,9 @@ with left:
                 f"Here is my resume:\n\n{resume_text}\n\n"
                 "Please parse it with the parse_resume tool."
             )
-            with st.spinner("Parsing resume…"):
-                reply = chat(intro)
+            with st.status("📄 Parsing your resume…", expanded=True) as status:
+                reply = chat(intro, status)
+                status.update(label="Resume parsed", state="complete", expanded=False)
             st.session_state.messages.append({"role": "user", "content": "📎 Resume uploaded"})
             st.session_state.messages.append({"role": "assistant", "content": reply})
             st.session_state.resume_uploaded = True
@@ -153,8 +180,9 @@ with left:
 
     if prompt := st.chat_input("Paste your resume or a JD, or talk to the agent…"):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.spinner("Thinking…"):
-            reply = chat(prompt)
+        with st.status("Working…", expanded=True) as status:
+            reply = chat(prompt, status)
+            status.update(label="Done", state="complete", expanded=False)
         st.session_state.messages.append({"role": "assistant", "content": reply})
         st.rerun()
 
